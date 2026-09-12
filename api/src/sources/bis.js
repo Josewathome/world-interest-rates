@@ -65,31 +65,44 @@ function splitCsvLine(line) {
   return out;
 }
 
+// A handful of concurrent workers rather than one request at a time. Fully
+// sequential over 22 countries was the single biggest contributor to sync
+// duration (~11-16s of it) — enough to risk tripping an external cron
+// scheduler's request timeout (e.g. cron-job.org caps at 30s) on a slow
+// network day, even though the sync itself would still finish server-side
+// regardless. Small concurrency, not unbounded: still a considerate way to
+// hit a free public service, just not needlessly one-at-a-time.
+const CONCURRENCY = 6;
+
 export async function fetchBis() {
   const targets = COUNTRIES.filter((c) => c.source === "bis");
   const results = [];
   const errors = [];
+  let next = 0;
 
-  // Sequential with a small delay to be a polite, low-volume consumer of a
-  // free public service — this only runs on a slow cron cadence anyway.
-  for (const country of targets) {
-    try {
-      const observations = await fetchOne(country.bisCode);
-      const history = deriveHistory(observations);
-      results.push({
-        countryCode: country.code,
-        currentRate: history.currentRate,
-        rateEffectiveDate: history.currentEffectiveDate,
-        seedPreviousRate: history.previousRate,
-        transitions: history.transitions,
-        rateType: "Policy Rate",
-        source: "bis",
-        sourceCadence: "daily (BIS aggregation, ~few days lag)",
-      });
-    } catch (err) {
-      errors.push(`${country.code}: ${err.message}`);
+  async function worker() {
+    while (next < targets.length) {
+      const country = targets[next++];
+      try {
+        const observations = await fetchOne(country.bisCode);
+        const history = deriveHistory(observations);
+        results.push({
+          countryCode: country.code,
+          currentRate: history.currentRate,
+          rateEffectiveDate: history.currentEffectiveDate,
+          seedPreviousRate: history.previousRate,
+          transitions: history.transitions,
+          rateType: "Policy Rate",
+          source: "bis",
+          sourceCadence: "daily (BIS aggregation, ~few days lag)",
+        });
+      } catch (err) {
+        errors.push(`${country.code}: ${err.message}`);
+      }
     }
   }
+
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, worker));
 
   if (errors.length) {
     console.warn(`BIS sync: ${errors.length} country lookups failed:\n${errors.join("\n")}`);
