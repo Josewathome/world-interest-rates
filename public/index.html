@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World Interest Rates Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>World Interest Rates</h1>
+    <div class="topbar-meta">
+      <span id="last-updated">Loading…</span>
+      <button id="refresh-btn" title="Refresh now">⟳</button>
+    </div>
+  </header>
+
+  <nav class="region-tabs" id="region-tabs">
+    <button class="tab active" data-region="All">All</button>
+    <button class="tab" data-tag="G20">G20</button>
+    <button class="tab" data-region="Europe">Europe</button>
+    <button class="tab" data-region="Americas">Americas</button>
+    <button class="tab" data-region="Asia">Asia</button>
+    <button class="tab" data-region="Oceania">Oceania</button>
+    <button class="tab" data-region="Africa">Africa</button>
+    <button class="tab" data-region="Middle East">Middle East</button>
+  </nav>
+
+  <main>
+    <div class="table-scroll">
+    <table class="rates-table">
+      <thead>
+        <tr>
+          <th>Country</th>
+          <th>Central Bank</th>
+          <th>Current Rate</th>
+          <th>Previous Rate</th>
+          <th>Change</th>
+          <th>Trend</th>
+          <th>Last Changed</th>
+          <th>Next Meeting</th>
+          <th>Inflation (CPI YoY)</th>
+          <th title="Real interest rate = Current Rate − Inflation (CPI YoY). Only shown where we have real CPI data.">Real Interest Rate<br /><span class="th-sub">(Rate − CPI)</span></th>
+          <th>FX / USD</th>
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody id="rates-body">
+        <tr><td colspan="12" class="empty-state">Loading rates…</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </main>
+
+  <footer>
+    <p>
+      Data from free public sources: Federal Reserve (FRED), ECB, Bank of England, Bank of Canada,
+      Central Bank of Brazil, and the Bank for International Settlements (BIS) policy-rate database.
+      Inflation (CPI) is shown for US/Euro Area/Brazil only, labeled with its actual reference month —
+      CPI always lags by weeks to months everywhere, unlike a rate decision. FX rates are ECB daily
+      reference rates (frankfurter.dev); a few currencies aren't covered. Not investment advice.
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

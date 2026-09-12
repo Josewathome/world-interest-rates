@@ -1,0 +1,14 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - api/.env
+    volumes:
+      - rates-data:/app/data
+
+volumes:
+  rates-data:
