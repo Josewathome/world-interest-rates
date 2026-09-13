@@ -4,6 +4,8 @@ A free, self-hosted "what's the current policy rate, right now" dashboard for
 major central banks — plus a small API (protected by an API key) that other
 tools can query for the same cached data.
 
+Try The website (https://world-interest-rates.onrender.com/)[https://world-interest-rates.onrender.com/]
+
 ## How it's built
 
 ```
