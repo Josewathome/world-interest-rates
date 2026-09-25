@@ -56,7 +56,7 @@
 // simplification most independent FedWatch replicas use, accurate as long
 // as the contract month contains a single meeting (true for every US FOMC
 // meeting: they're never two-to-a-month).
-import { MEETING_CALENDARS } from "../config/meetingCalendars.js";
+import { nextMeetingDate } from "../config/meetingCalendars.js";
 import { extractTransitions } from "../utils/history.js";
 
 const YAHOO_HEADERS = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" };
@@ -169,10 +169,11 @@ function impliedChangeFromContract(effrNow, meetingDate, latestClose) {
 // sync/index.js so this module doesn't need its own DB access. Used purely
 // as a cross-check that EFFR is in the right ballpark.
 export async function fetchRateExpectations(knownTargetRate) {
-  const meetings = MEETING_CALENDARS.US || [];
   const today = new Date().toISOString().slice(0, 10);
-  const nextMeeting = meetings.filter((m) => m >= today).sort()[0];
-  if (!nextMeeting) throw new Error("No upcoming US FOMC meeting in the local calendar — refresh meetingCalendars.js");
+  // Merges the hand-maintained baseline with anything fedCalendar.js has
+  // auto-discovered — see meetingCalendars.js and sync/index.js.
+  const nextMeeting = await nextMeetingDate("US");
+  if (!nextMeeting) throw new Error("No upcoming US FOMC meeting known — hand-maintained list and auto-discovery are both exhausted");
 
   const effrNow = await fetchEffr();
 

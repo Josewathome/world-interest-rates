@@ -188,6 +188,28 @@ export async function upsertRateExpectations(countryCode, row) {
   });
 }
 
+// Auto-discovered meeting dates (see src/sources/fedCalendar.js) — layered
+// on top of, never replacing, the hand-maintained baseline in
+// config/meetingCalendars.js.
+export async function getDiscoveredMeetingDates(countryCode) {
+  const res = await db.execute({
+    sql: "SELECT meeting_date FROM discovered_meeting_dates WHERE country_code = ? ORDER BY meeting_date ASC",
+    args: [countryCode],
+  });
+  return res.rows.map((r) => r.meeting_date);
+}
+
+export async function insertDiscoveredMeetingDates(countryCode, dates, source) {
+  const now = new Date().toISOString();
+  for (const date of dates) {
+    await db.execute({
+      sql: `INSERT OR IGNORE INTO discovered_meeting_dates (country_code, meeting_date, source, discovered_at)
+            VALUES (?, ?, ?, ?)`,
+      args: [countryCode, date, source, now],
+    });
+  }
+}
+
 const RATE_COLUMNS = [
   "country_code", "country_name", "central_bank_name", "region", "tags",
   "rate_type", "current_rate", "previous_rate", "change_bps",

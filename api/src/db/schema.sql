@@ -56,6 +56,19 @@ CREATE TABLE IF NOT EXISTS rates (
   updated_at TEXT
 );
 
+-- Meeting dates auto-discovered by scraping a central bank's own calendar
+-- page (currently just src/sources/fedCalendar.js for the US), layered on
+-- top of the hand-maintained baseline in config/meetingCalendars.js rather
+-- than replacing it — see db/index.js's getNextMeetingDate for how the two
+-- are merged.
+CREATE TABLE IF NOT EXISTS discovered_meeting_dates (
+  country_code TEXT NOT NULL,
+  meeting_date TEXT NOT NULL,
+  source TEXT NOT NULL,
+  discovered_at TEXT NOT NULL,
+  PRIMARY KEY (country_code, meeting_date)
+);
+
 CREATE TABLE IF NOT EXISTS rate_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   country_code TEXT NOT NULL,

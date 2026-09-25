@@ -7,9 +7,14 @@ import { fetchBis } from "../sources/bis.js";
 import { fetchInflation } from "../sources/inflation.js";
 import { fetchFx } from "../sources/fx.js";
 import { fetchRateExpectations } from "../sources/rateExpectations.js";
+import { fetchFedCalendarDates } from "../sources/fedCalendar.js";
 import { COUNTRIES_BY_CODE } from "../config/countries.js";
-import { nextMeetingDate } from "../config/meetingCalendars.js";
-import { upsertRate, upsertInflation, upsertFx, upsertRateExpectations, getRateByCode, logSync, pruneSyncLog } from "../db/index.js";
+import { MEETING_CALENDARS, nextMeetingDate } from "../config/meetingCalendars.js";
+import {
+  upsertRate, upsertInflation, upsertFx, upsertRateExpectations,
+  getRateByCode, getDiscoveredMeetingDates, insertDiscoveredMeetingDates,
+  logSync, pruneSyncLog,
+} from "../db/index.js";
 
 // Order matters only in that "bis" runs last as the universal baseline —
 // each dedicated fast-lane source only ever writes its own country, so there
@@ -23,8 +28,14 @@ const SOURCES = [
   { name: "bis", fetch: fetchBis },
 ];
 
+// Don't hit the Fed's site every sync — only refresh once the known runway
+// (hand-maintained baseline + anything already auto-discovered) gets short.
+const CALENDAR_BUFFER_DAYS = 60;
+
 export async function runSync() {
   const summary = { totalUpdated: 0, changedCountries: [], errors: [] };
+
+  await refreshFedCalendarIfNeeded(summary);
 
   for (const { name, fetch: fetchFn } of SOURCES) {
     try {
@@ -46,7 +57,7 @@ export async function runSync() {
             region: meta.region,
             tags: meta.tags,
             currency: meta.currency,
-            nextMeetingDate: nextMeetingDate(row.countryCode),
+            nextMeetingDate: await nextMeetingDate(row.countryCode),
           });
           countUpdated++;
           if (result.changed) summary.changedCountries.push(row.countryCode);
@@ -85,6 +96,44 @@ export async function runSync() {
   await pruneSyncLog();
 
   return summary;
+}
+
+// Auto-refreshes the US FOMC calendar from the Fed's own page once the known
+// runway (hand-maintained list + anything already discovered) runs under
+// CALENDAR_BUFFER_DAYS — see src/sources/fedCalendar.js for why scraping is
+// reasonable here and what "fails closed" means for it. Only ever adds
+// dates; never touches config/meetingCalendars.js or removes anything.
+async function refreshFedCalendarIfNeeded(summary) {
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const staticDates = MEETING_CALENDARS.US || [];
+  const discovered = await getDiscoveredMeetingDates("US");
+  const knownFuture = [...staticDates, ...discovered].filter((d) => d >= todayIso).sort();
+  const furthest = knownFuture[knownFuture.length - 1];
+  const bufferDays = furthest
+    ? Math.round((new Date(`${furthest}T00:00:00Z`) - new Date(`${todayIso}T00:00:00Z`)) / 86_400_000)
+    : -1;
+
+  if (furthest && bufferDays >= CALENDAR_BUFFER_DAYS) {
+    // Plenty of runway — don't hit the Fed's site needlessly. Still logged
+    // (as "skipped", not silence) so sync_log can confirm this check is
+    // alive and show the current buffer, not just go quiet when there's
+    // nothing to do.
+    await logSync("fed_calendar", "skipped", `buffer is ${bufferDays}d (furthest known: ${furthest}), refresh not needed yet`, 0);
+    return;
+  }
+
+  try {
+    const byYear = await fetchFedCalendarDates();
+    const allScraped = Object.values(byYear).flat();
+    const newDates = allScraped.filter((d) => d >= todayIso && !knownFuture.includes(d));
+    if (newDates.length) {
+      await insertDiscoveredMeetingDates("US", newDates, "fed_calendar_scrape");
+    }
+    await logSync("fed_calendar", "ok", `buffer was ${bufferDays}d, added ${newDates.length} new date(s)`, newDates.length);
+  } catch (err) {
+    summary.errors.push(`fed_calendar: ${err.message}`);
+    await logSync("fed_calendar", "error", err.message, 0);
+  }
 }
 
 async function runEnrichment(summary, name, fetchFn, upsertFn) {
