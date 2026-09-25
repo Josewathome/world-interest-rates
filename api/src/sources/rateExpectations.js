@@ -14,8 +14,33 @@
 //    one data source in this whole project that isn't an official
 //    government/central-bank API: no published contract, no stability
 //    guarantee, could change shape or start blocking us without notice.
-//    If it breaks, this must fail closed (throw, get skipped, log an
-//    error) rather than ever serve a wrong or stale-looking-fresh number.
+//
+// Because that source is unofficial, every fetch is independently verified
+// below — not a one-time manual check, but something every sync run does
+// for itself, every time:
+//   1. Yahoo's response echoes the symbol back (meta.symbol) — confirms we
+//      got the contract we actually asked for, not something substituted.
+//   2. Yahoo's longName truncates to the contract month's first two letters
+//      (e.g. "...Oc" for October) — cross-checked against the month we
+//      requested, so a symbol-format change on their end trips an error
+//      instead of silently mispricing a different month.
+//   3. EFFR and the futures price are range-checked (0-20% and 50-100
+//      respectively) — catches a wrong series, a unit error, or garbage.
+//   4. EFFR is cross-checked against the target rate we already track from
+//      FRED's own DFEDTARU series (src/sources/fred.js) — they should sit
+//      within ~60bp of each other; a bigger gap means one of the two feeds
+//      is wrong, not that the Fed did something extraordinary.
+//   5. The implied move itself is capped at a generous ±150bp — real FOMC
+//      moves are essentially always 0/25/50bp; anything past that is bad
+//      data, not a real market view.
+//   6. Staleness: has the settle price actually moved across the last few
+//      sessions, or is the feed just repeating a stale value? Verified
+//      necessary in practice — a back-month contract sat flat for 6
+//      straight sessions during testing. Low/zero trading volume is
+//      treated as the same signal.
+// Any failed check throws, which (via sync/index.js's error handling) skips
+// the update for that cycle and leaves the last known-good value in place —
+// this must fail closed, never serve a wrong number with false confidence.
 //
 // Method: a 30-Day Fed Funds future settles at 100 minus the average daily
 // EFFR over its contract calendar month. For a month containing exactly one
@@ -32,7 +57,13 @@ import { MEETING_CALENDARS } from "../config/meetingCalendars.js";
 
 const YAHOO_HEADERS = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" };
 const CME_MONTH_CODES = ["F", "G", "H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]; // Jan..Dec
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 const STALE_SESSIONS = 3; // flag if the settle price hasn't moved across this many trading days
+const EFFR_VS_TARGET_TOLERANCE = 0.60; // percentage points
+const MAX_PLAUSIBLE_MOVE_BPS = 150;
 
 function contractSymbol(year, monthIndex0) {
   const code = CME_MONTH_CODES[monthIndex0];
@@ -53,23 +84,52 @@ async function fetchEffr() {
   const data = await res.json();
   const obs = data.observations?.[0];
   if (!obs || obs.value === ".") throw new Error("FRED EFFR: no observation returned");
-  return parseFloat(obs.value);
+  const value = parseFloat(obs.value);
+  if (!Number.isFinite(value) || value < 0 || value > 20) {
+    throw new Error(`FRED EFFR: implausible value ${value} — refusing to use it`);
+  }
+  return value;
 }
 
-async function fetchContractHistory(symbol, days = 6) {
+async function fetchContractQuote(symbol, monthIndex0, days = 6) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${days}d&interval=1d`;
   const res = await fetch(url, { headers: YAHOO_HEADERS });
   if (!res.ok) throw new Error(`Yahoo HTTP ${res.status} for ${symbol}`);
   const data = await res.json();
   if (data.chart?.error) throw new Error(`Yahoo error for ${symbol}: ${JSON.stringify(data.chart.error)}`);
   const result = data.chart?.result?.[0];
+  const meta = result?.meta;
   const closes = result?.indicators?.quote?.[0]?.close;
   const timestamps = result?.timestamp;
-  if (!closes || !timestamps) throw new Error(`Yahoo: unexpected response shape for ${symbol}`);
+  if (!meta || !closes || !timestamps) throw new Error(`Yahoo: unexpected response shape for ${symbol}`);
 
-  return timestamps
+  // Check 1: did we actually get the contract we asked for, not something
+  // Yahoo silently substituted or redirected to?
+  if (meta.symbol !== symbol) {
+    throw new Error(`Yahoo: requested ${symbol}, response echoed symbol ${meta.symbol} — refusing to trust it`);
+  }
+
+  // Check 2: Yahoo's longName truncates to the contract month's first two
+  // letters (observed: "...Oc" for October). Cross-check against the month
+  // we actually requested, so a future format change trips an error instead
+  // of silently mispricing a different month than we think we have.
+  const expectedPrefix = MONTH_NAMES[monthIndex0].slice(0, 2);
+  const nameField = meta.longName || meta.shortName || "";
+  if (!nameField.includes(expectedPrefix)) {
+    throw new Error(`Yahoo: expected "${expectedPrefix}" in contract name for ${symbol}, got "${nameField}" — month mismatch`);
+  }
+
+  const history = timestamps
     .map((t, i) => ({ date: new Date(t * 1000).toISOString().slice(0, 10), close: closes[i] }))
     .filter((o) => o.close !== null && o.close !== undefined);
+  if (!history.length) throw new Error(`Yahoo: no usable price history for ${symbol}`);
+
+  const latestClose = history[history.length - 1].close;
+  if (!Number.isFinite(latestClose) || latestClose < 50 || latestClose > 100) {
+    throw new Error(`Yahoo: implausible futures price ${latestClose} for ${symbol} — refusing to use it`);
+  }
+
+  return { history, volume: meta.regularMarketVolume ?? 0 };
 }
 
 // Splits an implied move into hold/cut/hike percentages by linear
@@ -99,7 +159,11 @@ function impliedChangeFromContract(effrNow, meetingDate, latestClose) {
   return { impliedPostRate, impliedChangeBps };
 }
 
-export async function fetchRateExpectations() {
+// `knownTargetRate` is the US target rate we already have from FRED's
+// DFEDTARU series (src/sources/fred.js / the rates table) — passed in by
+// sync/index.js so this module doesn't need its own DB access. Used purely
+// as a cross-check that EFFR is in the right ballpark.
+export async function fetchRateExpectations(knownTargetRate) {
   const meetings = MEETING_CALENDARS.US || [];
   const today = new Date().toISOString().slice(0, 10);
   const nextMeeting = meetings.filter((m) => m >= today).sort()[0];
@@ -107,21 +171,38 @@ export async function fetchRateExpectations() {
 
   const effrNow = await fetchEffr();
 
+  if (typeof knownTargetRate === "number" && Math.abs(effrNow - knownTargetRate) > EFFR_VS_TARGET_TOLERANCE) {
+    throw new Error(
+      `EFFR (${effrNow}) is more than ${EFFR_VS_TARGET_TOLERANCE}pp from the known target rate (${knownTargetRate}) — ` +
+      `one of these feeds is likely wrong, refusing to compute expectations on top of it`
+    );
+  }
+
   const [year, month] = nextMeeting.split("-").map(Number);
-  const symbol = contractSymbol(year, month - 1);
-  const history = await fetchContractHistory(symbol);
-  if (!history.length) throw new Error(`No futures history returned for ${symbol}`);
+  const monthIndex0 = month - 1;
+  const symbol = contractSymbol(year, monthIndex0);
+  const { history, volume } = await fetchContractQuote(symbol, monthIndex0);
 
   const latest = history[history.length - 1];
   const { impliedPostRate, impliedChangeBps } = impliedChangeFromContract(effrNow, nextMeeting, latest.close);
+
+  if (Math.abs(impliedChangeBps) > MAX_PLAUSIBLE_MOVE_BPS) {
+    throw new Error(
+      `Implied move of ${impliedChangeBps}bp exceeds the ${MAX_PLAUSIBLE_MOVE_BPS}bp plausibility cap — ` +
+      `treating as bad data rather than a real market view`
+    );
+  }
+
   const todayBuckets = bucketProbabilities(impliedChangeBps);
 
   // Staleness guard: has this contract's settle price actually moved across
   // the last few sessions, or is the feed just repeating a stale value?
-  // Verified necessary in practice — a back-month ZQ contract sat completely
-  // flat for 6 straight sessions during testing.
+  // Zero/near-zero trading volume is treated as the same signal — a price
+  // that "hasn't moved" because nobody's trading it is just as untrustworthy
+  // as one that's genuinely stuck.
   const recentCloses = history.slice(-STALE_SESSIONS).map((o) => o.close);
-  const stale = recentCloses.length === STALE_SESSIONS && recentCloses.every((c) => c === recentCloses[0]);
+  const priceFlat = recentCloses.length === STALE_SESSIONS && recentCloses.every((c) => c === recentCloses[0]);
+  const stale = priceFlat || volume < 10;
 
   // "Change vs yesterday" — recompute using the prior session's close so we
   // can show how expectations moved, not just where they sit today.
