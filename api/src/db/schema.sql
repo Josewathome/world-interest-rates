@@ -40,6 +40,17 @@ CREATE TABLE IF NOT EXISTS rates (
   expected_hike_pct REAL,
   expected_cut_pct_change_1d REAL,
   expectations_stale INTEGER,
+  -- Why expectations_stale is true: "unchanged_days" (see the two _unchanged_
+  -- columns below for how long) or "low_volume". Null when not stale.
+  expectations_stale_reason TEXT,
+  -- The last date the underlying futures price actually changed, found by
+  -- walking back up to 35 days (see rateExpectations.js) — not just "was it
+  -- flat for the last few days".  _is_lower_bound means the price was flat
+  -- across the entire lookback window, so this date is our earliest evidence,
+  -- not necessarily the true start.
+  expectations_unchanged_since TEXT,
+  expectations_unchanged_days INTEGER,
+  expectations_unchanged_is_lower_bound INTEGER,
   expectations_source TEXT,
   expectations_updated_at TEXT,
   updated_at TEXT

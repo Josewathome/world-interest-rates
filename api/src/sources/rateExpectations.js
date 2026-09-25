@@ -33,11 +33,14 @@
 //   5. The implied move itself is capped at a generous ±150bp — real FOMC
 //      moves are essentially always 0/25/50bp; anything past that is bad
 //      data, not a real market view.
-//   6. Staleness: has the settle price actually moved across the last few
-//      sessions, or is the feed just repeating a stale value? Verified
-//      necessary in practice — a back-month contract sat flat for 6
-//      straight sessions during testing. Low/zero trading volume is
-//      treated as the same signal.
+//   6. Staleness: has the settle price actually moved recently, or is the
+//      feed just repeating a stale value? Verified necessary in practice —
+//      a back-month contract sat flat for 6 straight sessions during
+//      testing. Rather than just a yes/no, we look back up to 35 days to
+//      find the real last-change date (reusing the same step-history logic
+//      the sparklines use) and report how many days that actually is — not
+//      just "possibly stale" with no way to judge how stale. Low/zero
+//      trading volume is treated as the same signal.
 // Any failed check throws, which (via sync/index.js's error handling) skips
 // the update for that cycle and leaves the last known-good value in place —
 // this must fail closed, never serve a wrong number with false confidence.
@@ -54,6 +57,7 @@
 // as the contract month contains a single meeting (true for every US FOMC
 // meeting: they're never two-to-a-month).
 import { MEETING_CALENDARS } from "../config/meetingCalendars.js";
+import { extractTransitions } from "../utils/history.js";
 
 const YAHOO_HEADERS = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" };
 const CME_MONTH_CODES = ["F", "G", "H", "J", "K", "M", "N", "Q", "U", "V", "X", "Z"]; // Jan..Dec
@@ -61,7 +65,8 @@ const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
 ];
-const STALE_SESSIONS = 3; // flag if the settle price hasn't moved across this many trading days
+const PRICE_LOOKBACK_DAYS = 35; // wide enough to find a real last-change date, not just "not in the last week"
+const STALE_DAYS_THRESHOLD = 4; // flag as stale once the price has sat unchanged this many calendar days
 const EFFR_VS_TARGET_TOLERANCE = 0.60; // percentage points
 const MAX_PLAUSIBLE_MOVE_BPS = 150;
 
@@ -91,7 +96,7 @@ async function fetchEffr() {
   return value;
 }
 
-async function fetchContractQuote(symbol, monthIndex0, days = 6) {
+async function fetchContractQuote(symbol, monthIndex0, days = PRICE_LOOKBACK_DAYS) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=${days}d&interval=1d`;
   const res = await fetch(url, { headers: YAHOO_HEADERS });
   if (!res.ok) throw new Error(`Yahoo HTTP ${res.status} for ${symbol}`);
@@ -195,14 +200,31 @@ export async function fetchRateExpectations(knownTargetRate) {
 
   const todayBuckets = bucketProbabilities(impliedChangeBps);
 
-  // Staleness guard: has this contract's settle price actually moved across
-  // the last few sessions, or is the feed just repeating a stale value?
+  // Staleness, with an actual answer to "since when" — not just yes/no.
+  // Reuses the same step-history logic the sparklines use: walk the price
+  // series back (up to PRICE_LOOKBACK_DAYS) to find the last date it
+  // actually changed, rather than just checking the last few days.
+  const priceTransitions = extractTransitions(history.map((o) => ({ date: o.date, value: o.close })));
+  const lastPriceChange = priceTransitions[priceTransitions.length - 1];
+  // If there's only one "transition" (the anchor point), the price never
+  // moved anywhere in our whole lookback window — we only know it was
+  // already at this value on the earliest date we looked at, not when it
+  // truly started, so this is a lower bound, not an exact answer.
+  const unchangedIsLowerBound = priceTransitions.length < 2;
+  const unchangedSince = lastPriceChange.date;
+  const unchangedDays = Math.round(
+    (new Date(`${today}T00:00:00Z`) - new Date(`${unchangedSince}T00:00:00Z`)) / 86_400_000
+  );
+
   // Zero/near-zero trading volume is treated as the same signal — a price
   // that "hasn't moved" because nobody's trading it is just as untrustworthy
-  // as one that's genuinely stuck.
-  const recentCloses = history.slice(-STALE_SESSIONS).map((o) => o.close);
-  const priceFlat = recentCloses.length === STALE_SESSIONS && recentCloses.every((c) => c === recentCloses[0]);
-  const stale = priceFlat || volume < 10;
+  // as one that's genuinely stuck. Tracked as a distinct reason, since "stale
+  // because of 8 unchanged days" and "stale because of no volume today" call
+  // for different levels of concern.
+  const daysStale = unchangedDays >= STALE_DAYS_THRESHOLD;
+  const volumeStale = volume < 10;
+  const stale = daysStale || volumeStale;
+  const staleReason = daysStale ? "unchanged_days" : volumeStale ? "low_volume" : null;
 
   // "Change vs yesterday" — recompute using the prior session's close so we
   // can show how expectations moved, not just where they sit today.
@@ -224,6 +246,10 @@ export async function fetchRateExpectations(knownTargetRate) {
     hikePct: Math.round(todayBuckets.hikePct * 10) / 10,
     cutPctChangeVsYesterday,
     stale,
+    staleReason,
+    unchangedSince,
+    unchangedDays,
+    unchangedIsLowerBound,
     source: "fred_effr+yahoo_cme_futures",
   }];
 }

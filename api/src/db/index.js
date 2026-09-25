@@ -32,6 +32,10 @@ const MIGRATIONS = [
   { column: "expected_hike_pct", ddl: "ALTER TABLE rates ADD COLUMN expected_hike_pct REAL" },
   { column: "expected_cut_pct_change_1d", ddl: "ALTER TABLE rates ADD COLUMN expected_cut_pct_change_1d REAL" },
   { column: "expectations_stale", ddl: "ALTER TABLE rates ADD COLUMN expectations_stale INTEGER" },
+  { column: "expectations_stale_reason", ddl: "ALTER TABLE rates ADD COLUMN expectations_stale_reason TEXT" },
+  { column: "expectations_unchanged_since", ddl: "ALTER TABLE rates ADD COLUMN expectations_unchanged_since TEXT" },
+  { column: "expectations_unchanged_days", ddl: "ALTER TABLE rates ADD COLUMN expectations_unchanged_days INTEGER" },
+  { column: "expectations_unchanged_is_lower_bound", ddl: "ALTER TABLE rates ADD COLUMN expectations_unchanged_is_lower_bound INTEGER" },
   { column: "expectations_source", ddl: "ALTER TABLE rates ADD COLUMN expectations_source TEXT" },
   { column: "expectations_updated_at", ddl: "ALTER TABLE rates ADD COLUMN expectations_updated_at TEXT" },
 ];
@@ -159,7 +163,9 @@ export async function upsertRateExpectations(countryCode, row) {
     sql: `UPDATE rates SET
             expected_meeting_date = ?, expected_change_bps = ?, expected_post_meeting_rate = ?,
             expected_hold_pct = ?, expected_cut_pct = ?, expected_hike_pct = ?,
-            expected_cut_pct_change_1d = ?, expectations_stale = ?, expectations_source = ?,
+            expected_cut_pct_change_1d = ?, expectations_stale = ?, expectations_stale_reason = ?,
+            expectations_unchanged_since = ?, expectations_unchanged_days = ?,
+            expectations_unchanged_is_lower_bound = ?, expectations_source = ?,
             expectations_updated_at = ?
           WHERE country_code = ?`,
     args: [
@@ -171,6 +177,10 @@ export async function upsertRateExpectations(countryCode, row) {
       row.hikePct,
       row.cutPctChangeVsYesterday,
       row.stale ? 1 : 0,
+      row.staleReason,
+      row.unchangedSince,
+      row.unchangedDays,
+      row.unchangedIsLowerBound ? 1 : 0,
       row.source,
       new Date().toISOString(),
       countryCode,
@@ -186,7 +196,9 @@ const RATE_COLUMNS = [
   "fx_rate", "fx_rate_date",
   "expected_meeting_date", "expected_change_bps", "expected_post_meeting_rate",
   "expected_hold_pct", "expected_cut_pct", "expected_hike_pct", "expected_cut_pct_change_1d",
-  "expectations_stale", "expectations_source", "expectations_updated_at",
+  "expectations_stale", "expectations_stale_reason", "expectations_unchanged_since",
+  "expectations_unchanged_days", "expectations_unchanged_is_lower_bound",
+  "expectations_source", "expectations_updated_at",
   "updated_at",
 ];
 
@@ -215,6 +227,10 @@ function deserializeRate(row) {
   out.expectations_stale = row.expectations_stale === null || row.expectations_stale === undefined
     ? null
     : Boolean(row.expectations_stale);
+  out.expectations_unchanged_is_lower_bound =
+    row.expectations_unchanged_is_lower_bound === null || row.expectations_unchanged_is_lower_bound === undefined
+      ? null
+      : Boolean(row.expectations_unchanged_is_lower_bound);
   // Real (inflation-adjusted) rate — simple Fisher approximation
   // (nominal - inflation), only meaningful where we actually have inflation
   // data; never fabricated for the many countries we don't cover.

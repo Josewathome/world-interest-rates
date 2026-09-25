@@ -291,8 +291,14 @@ footer {
 }
 
 .fed-card-sub {
-  margin: 0.25rem 0 1rem;
+  margin: 0.25rem 0 0.3rem;
   font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.fed-freshness {
+  margin: 0 0 1rem;
+  font-size: 0.76rem;
   color: var(--muted);
 }
 

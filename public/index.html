@@ -29,9 +29,10 @@
   <section class="fed-card" id="fed-card" hidden>
     <div class="fed-card-head">
       <h2>US Rate Expectations</h2>
-      <span class="fed-stale-badge" id="fed-stale-badge" hidden title="The underlying futures price hasn't moved in 3+ trading sessions — treat this reading with caution.">⚠ possibly stale</span>
+      <span class="fed-stale-badge" id="fed-stale-badge" hidden title="The underlying futures price hasn't moved in 4+ days, or is trading on very low volume — treat this reading with caution.">⚠ possibly stale</span>
     </div>
     <p class="fed-card-sub">Market-implied, derived from CME 30-Day Fed Funds futures pricing — not an official Fed forecast.</p>
+    <p class="fed-freshness" id="fed-freshness"></p>
     <div class="fed-stats">
       <div class="fed-stat"><span class="fed-label">Current target</span><span class="fed-value tabular" id="fed-current">—</span></div>
       <div class="fed-stat"><span class="fed-label">Next FOMC</span><span class="fed-value tabular" id="fed-next-meeting">—</span></div>

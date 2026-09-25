@@ -123,8 +123,25 @@ function renderFedExpectations() {
   }
   card.hidden = false;
 
-  document.getElementById("fed-stale-badge").hidden = !us.expectations_stale;
+  const staleBadge = document.getElementById("fed-stale-badge");
+  staleBadge.hidden = !us.expectations_stale;
+  if (us.expectations_stale) {
+    const reasonText = us.expectations_stale_reason === "low_volume"
+      ? "low trading volume"
+      : `unchanged ${us.expectations_unchanged_is_lower_bound ? "for at least" : "for"} ${us.expectations_unchanged_days} day${us.expectations_unchanged_days === 1 ? "" : "s"}`;
+    staleBadge.textContent = `⚠ possibly stale — ${reasonText}`;
+  }
   document.getElementById("fed-current").textContent = formatRate(us.current_rate);
+
+  const freshnessEl = document.getElementById("fed-freshness");
+  if (us.expectations_unchanged_since) {
+    const prefix = us.expectations_unchanged_is_lower_bound ? "at least " : "";
+    freshnessEl.textContent =
+      `Futures price last changed ${us.expectations_unchanged_since} ` +
+      `(${prefix}${formatDaysSince(us.expectations_unchanged_since)}).`;
+  } else {
+    freshnessEl.textContent = "";
+  }
 
   const [y, m, d] = us.expected_meeting_date.split("-");
   document.getElementById("fed-next-meeting").textContent = `${FOMC_MONTHS[parseInt(m, 10) - 1]} ${parseInt(d, 10)}, ${y}`;
