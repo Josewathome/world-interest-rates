@@ -26,6 +26,22 @@ CREATE TABLE IF NOT EXISTS rates (
   inflation_source TEXT,
   fx_rate REAL,
   fx_rate_date TEXT,
+  -- Market-implied rate-expectation fields (see src/sources/rateExpectations.js)
+  -- — currently US-only, since 30-Day Fed Funds futures are the one globally
+  -- liquid, freely-accessible instrument this can be computed from. Built on
+  -- an unofficial data source (Yahoo Finance's undocumented chart API), so
+  -- expectations_stale flags when the underlying futures price hasn't moved
+  -- in 3+ sessions — treat those rows with caution rather than as fact.
+  expected_meeting_date TEXT,
+  expected_change_bps REAL,
+  expected_post_meeting_rate REAL,
+  expected_hold_pct REAL,
+  expected_cut_pct REAL,
+  expected_hike_pct REAL,
+  expected_cut_pct_change_1d REAL,
+  expectations_stale INTEGER,
+  expectations_source TEXT,
+  expectations_updated_at TEXT,
   updated_at TEXT
 );
 

@@ -26,6 +26,25 @@
     <button class="tab" data-region="Middle East">Middle East</button>
   </nav>
 
+  <section class="fed-card" id="fed-card" hidden>
+    <div class="fed-card-head">
+      <h2>US Rate Expectations</h2>
+      <span class="fed-stale-badge" id="fed-stale-badge" hidden title="The underlying futures price hasn't moved in 3+ trading sessions — treat this reading with caution.">⚠ possibly stale</span>
+    </div>
+    <p class="fed-card-sub">Market-implied, derived from CME 30-Day Fed Funds futures pricing — not an official Fed forecast.</p>
+    <div class="fed-stats">
+      <div class="fed-stat"><span class="fed-label">Current target</span><span class="fed-value tabular" id="fed-current">—</span></div>
+      <div class="fed-stat"><span class="fed-label">Next FOMC</span><span class="fed-value tabular" id="fed-next-meeting">—</span></div>
+      <div class="fed-stat"><span class="fed-label">Expected rate after meeting</span><span class="fed-value tabular" id="fed-expected-rate">—</span></div>
+    </div>
+    <div class="fed-bar-section">
+      <span class="fed-label">Market-implied expectation</span>
+      <div class="fed-bar" id="fed-bar"></div>
+      <div class="fed-bar-legend" id="fed-bar-legend"></div>
+    </div>
+    <p class="fed-change" id="fed-change"></p>
+  </section>
+
   <main>
     <div class="table-scroll">
     <table class="rates-table">
@@ -58,7 +77,10 @@
       Central Bank of Brazil, and the Bank for International Settlements (BIS) policy-rate database.
       Inflation (CPI) is shown for US/Euro Area/Brazil only, labeled with its actual reference month —
       CPI always lags by weeks to months everywhere, unlike a rate decision. FX rates are ECB daily
-      reference rates (frankfurter.dev); a few currencies aren't covered. Not investment advice.
+      reference rates (frankfurter.dev); a few currencies aren't covered. US rate expectations are
+      market-implied estimates we calculate ourselves from CME Fed Funds futures pricing (via an
+      unofficial data feed) — not an official Fed forecast, and flagged when the underlying price
+      looks stale. Not investment advice.
     </p>
   </footer>
 

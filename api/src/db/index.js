@@ -19,9 +19,34 @@ if (url.startsWith("file:")) {
 
 export const db = createClient(authToken ? { url, authToken } : { url });
 
+// Columns added after the initial deploy. schema.sql's CREATE TABLE IF NOT
+// EXISTS only creates the table on a brand-new database — it's a no-op
+// against a live production table that already exists, so new columns need
+// an explicit migration or they silently never appear there.
+const MIGRATIONS = [
+  { column: "expected_meeting_date", ddl: "ALTER TABLE rates ADD COLUMN expected_meeting_date TEXT" },
+  { column: "expected_change_bps", ddl: "ALTER TABLE rates ADD COLUMN expected_change_bps REAL" },
+  { column: "expected_post_meeting_rate", ddl: "ALTER TABLE rates ADD COLUMN expected_post_meeting_rate REAL" },
+  { column: "expected_hold_pct", ddl: "ALTER TABLE rates ADD COLUMN expected_hold_pct REAL" },
+  { column: "expected_cut_pct", ddl: "ALTER TABLE rates ADD COLUMN expected_cut_pct REAL" },
+  { column: "expected_hike_pct", ddl: "ALTER TABLE rates ADD COLUMN expected_hike_pct REAL" },
+  { column: "expected_cut_pct_change_1d", ddl: "ALTER TABLE rates ADD COLUMN expected_cut_pct_change_1d REAL" },
+  { column: "expectations_stale", ddl: "ALTER TABLE rates ADD COLUMN expectations_stale INTEGER" },
+  { column: "expectations_source", ddl: "ALTER TABLE rates ADD COLUMN expectations_source TEXT" },
+  { column: "expectations_updated_at", ddl: "ALTER TABLE rates ADD COLUMN expectations_updated_at TEXT" },
+];
+
 export async function initDb() {
   const schema = fs.readFileSync(path.join(__dirname, "schema.sql"), "utf8");
   await db.executeMultiple(schema);
+
+  const existing = await db.execute("PRAGMA table_info(rates)");
+  const existingCols = new Set(existing.rows.map((r) => r.name));
+  for (const { column, ddl } of MIGRATIONS) {
+    if (!existingCols.has(column)) {
+      await db.execute(ddl);
+    }
+  }
 }
 
 export async function upsertRate(row) {
@@ -129,12 +154,40 @@ export async function upsertFx(countryCode, { fxRate, fxRateDate }) {
   });
 }
 
+export async function upsertRateExpectations(countryCode, row) {
+  await db.execute({
+    sql: `UPDATE rates SET
+            expected_meeting_date = ?, expected_change_bps = ?, expected_post_meeting_rate = ?,
+            expected_hold_pct = ?, expected_cut_pct = ?, expected_hike_pct = ?,
+            expected_cut_pct_change_1d = ?, expectations_stale = ?, expectations_source = ?,
+            expectations_updated_at = ?
+          WHERE country_code = ?`,
+    args: [
+      row.meetingDate,
+      row.impliedChangeBps,
+      row.impliedPostMeetingRate,
+      row.holdPct,
+      row.cutPct,
+      row.hikePct,
+      row.cutPctChangeVsYesterday,
+      row.stale ? 1 : 0,
+      row.source,
+      new Date().toISOString(),
+      countryCode,
+    ],
+  });
+}
+
 const RATE_COLUMNS = [
   "country_code", "country_name", "central_bank_name", "region", "tags",
   "rate_type", "current_rate", "previous_rate", "change_bps",
   "rate_effective_date", "transitions", "next_meeting_date", "source", "source_cadence",
   "currency_code", "inflation_rate", "inflation_period", "inflation_source",
-  "fx_rate", "fx_rate_date", "updated_at",
+  "fx_rate", "fx_rate_date",
+  "expected_meeting_date", "expected_change_bps", "expected_post_meeting_rate",
+  "expected_hold_pct", "expected_cut_pct", "expected_hike_pct", "expected_cut_pct_change_1d",
+  "expectations_stale", "expectations_source", "expectations_updated_at",
+  "updated_at",
 ];
 
 export async function getAllRates() {
@@ -159,6 +212,9 @@ function deserializeRate(row) {
   out.tags = JSON.parse(row.tags || "[]");
   out.transitions = JSON.parse(row.transitions || "[]");
   out.streak = computeStreak(out.transitions);
+  out.expectations_stale = row.expectations_stale === null || row.expectations_stale === undefined
+    ? null
+    : Boolean(row.expectations_stale);
   // Real (inflation-adjusted) rate — simple Fisher approximation
   // (nominal - inflation), only meaningful where we actually have inflation
   // data; never fabricated for the many countries we don't cover.

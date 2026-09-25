@@ -110,7 +110,51 @@ function formatCountdown(dateStr) {
   return { text: `${days} day${days === 1 ? "" : "s"}`, imminent: days <= 2 };
 }
 
+const FOMC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function renderFedExpectations() {
+  const card = document.getElementById("fed-card");
+  const us = rates.find((r) => r.country_code === "US");
+
+  const hasExpectations = us && us.expected_meeting_date != null && us.expected_hold_pct != null;
+  if (!hasExpectations) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  document.getElementById("fed-stale-badge").hidden = !us.expectations_stale;
+  document.getElementById("fed-current").textContent = formatRate(us.current_rate);
+
+  const [y, m, d] = us.expected_meeting_date.split("-");
+  document.getElementById("fed-next-meeting").textContent = `${FOMC_MONTHS[parseInt(m, 10) - 1]} ${parseInt(d, 10)}, ${y}`;
+  document.getElementById("fed-expected-rate").textContent = formatRate(us.expected_post_meeting_rate);
+
+  const bar = document.getElementById("fed-bar");
+  bar.innerHTML = `
+    <span class="fed-bar-seg hold" style="width:${us.expected_hold_pct}%"></span>
+    <span class="fed-bar-seg cut" style="width:${us.expected_cut_pct}%"></span>
+    <span class="fed-bar-seg hike" style="width:${us.expected_hike_pct}%"></span>
+  `;
+  document.getElementById("fed-bar-legend").innerHTML = `
+    <span><span class="dot hold"></span>Hold: ${us.expected_hold_pct.toFixed(0)}%</span>
+    <span><span class="dot cut"></span>25bp cut: ${us.expected_cut_pct.toFixed(0)}%</span>
+    <span><span class="dot hike"></span>25bp hike: ${us.expected_hike_pct.toFixed(0)}%</span>
+  `;
+
+  const changeEl = document.getElementById("fed-change");
+  const chg = us.expected_cut_pct_change_1d;
+  if (chg == null || chg === 0) {
+    changeEl.textContent = "No change in cut probability since yesterday.";
+  } else {
+    const cls = chg > 0 ? "up" : "down";
+    const sign = chg > 0 ? "+" : "";
+    changeEl.innerHTML = `Cut probability <span class="${cls}">${sign}${chg.toFixed(1)} pp</span> vs yesterday.`;
+  }
+}
+
 function render() {
+  renderFedExpectations();
   const tbody = document.getElementById("rates-body");
   const filtered = rates.filter((r) => {
     if (activeFilter.type === "region") {

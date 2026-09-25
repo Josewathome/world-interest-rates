@@ -264,3 +264,87 @@ footer {
   .sparkline { width: 64px; height: 24px; }
   .source-tag { font-size: 0.65rem; }
 }
+
+/* ---------- Fed Rate Expectations card ---------- */
+
+.fed-card {
+  margin: 1rem 1.5rem 0;
+  padding: 1.1rem 1.4rem 1.3rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.fed-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.fed-card-head h2 { margin: 0; font-size: 1rem; }
+
+.fed-stale-badge {
+  font-size: 0.72rem;
+  color: var(--down);
+  border: 1px solid var(--down);
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+}
+
+.fed-card-sub {
+  margin: 0.25rem 0 1rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.fed-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.6rem;
+  margin-bottom: 1.1rem;
+}
+.fed-stat { display: flex; flex-direction: column; gap: 0.15rem; }
+.fed-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.fed-value { font-size: 1.15rem; font-weight: 600; }
+
+.fed-bar-section { margin-bottom: 0.8rem; }
+.fed-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 0.4rem 0 0.5rem;
+  background: var(--border);
+}
+.fed-bar-seg.hold { background: var(--flat); }
+.fed-bar-seg.cut { background: var(--down); }
+.fed-bar-seg.hike { background: var(--up); }
+
+.fed-bar-legend {
+  display: flex;
+  gap: 1.2rem;
+  font-size: 0.8rem;
+  flex-wrap: wrap;
+}
+.fed-bar-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.fed-bar-legend .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.fed-bar-legend .dot.hold { background: var(--flat); }
+.fed-bar-legend .dot.cut { background: var(--down); }
+.fed-bar-legend .dot.hike { background: var(--up); }
+
+.fed-change {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin: 0;
+}
+.fed-change .up { color: var(--up); font-weight: 600; }
+.fed-change .down { color: var(--down); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .fed-card { margin: 0.75rem 0.75rem 0; padding: 1rem; }
+  .fed-stats { gap: 1rem; }
+}

@@ -6,9 +6,10 @@ import { fetchBcb } from "../sources/bcb.js";
 import { fetchBis } from "../sources/bis.js";
 import { fetchInflation } from "../sources/inflation.js";
 import { fetchFx } from "../sources/fx.js";
+import { fetchRateExpectations } from "../sources/rateExpectations.js";
 import { COUNTRIES_BY_CODE } from "../config/countries.js";
 import { nextMeetingDate } from "../config/meetingCalendars.js";
-import { upsertRate, upsertInflation, upsertFx, logSync, pruneSyncLog } from "../db/index.js";
+import { upsertRate, upsertInflation, upsertFx, upsertRateExpectations, logSync, pruneSyncLog } from "../db/index.js";
 
 // Order matters only in that "bis" runs last as the universal baseline —
 // each dedicated fast-lane source only ever writes its own country, so there
@@ -70,6 +71,7 @@ export async function runSync() {
   // current/previous_rate/change tracking above.
   await runEnrichment(summary, "inflation", fetchInflation, (row) => upsertInflation(row.countryCode, row));
   await runEnrichment(summary, "fx", fetchFx, (row) => upsertFx(row.countryCode, row));
+  await runEnrichment(summary, "rate_expectations", fetchRateExpectations, (row) => upsertRateExpectations(row.countryCode, row));
 
   // Keep sync_log from growing forever — see pruneSyncLog's comment.
   await pruneSyncLog();
