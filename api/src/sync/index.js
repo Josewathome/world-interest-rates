@@ -37,9 +37,25 @@ export async function runSync() {
 
   await refreshFedCalendarIfNeeded(summary);
 
-  for (const { name, fetch: fetchFn } of SOURCES) {
+  // Fetch every source concurrently, then write results one source at a time.
+  // Fetching is the slow part (network); a hung or degraded source — BCB
+  // lately — should cost its own timeout once, not stack on top of every
+  // source queued behind it. Reordering the fetches is safe because each
+  // fast-lane source only ever writes its own country (see SOURCES above).
+  const fetched = await Promise.allSettled(SOURCES.map(({ fetch: fetchFn }) => fetchFn()));
+
+  for (let i = 0; i < SOURCES.length; i++) {
+    const { name } = SOURCES[i];
+    const outcome = fetched[i];
+    if (outcome.status === "rejected") {
+      const message = outcome.reason?.message || String(outcome.reason);
+      summary.errors.push(`${name}: ${message}`);
+      await logSync(name, "error", message, 0);
+      continue;
+    }
+
     try {
-      const rows = await fetchFn();
+      const rows = outcome.value;
       let countUpdated = 0;
       const rowErrors = [];
 
@@ -79,18 +95,24 @@ export async function runSync() {
   }
 
   // Enrichment passes — layered onto existing rate rows, never affecting
-  // current/previous_rate/change tracking above.
-  await runEnrichment(summary, "inflation", fetchInflation, (row) => upsertInflation(row.countryCode, row));
-  await runEnrichment(summary, "fx", fetchFx, (row) => upsertFx(row.countryCode, row));
-  // Cross-checked against the target rate we already have from FRED's own
-  // DFEDTARU series — see rateExpectations.js's file-header comment for why.
+  // current/previous_rate/change tracking above. Independent of each other
+  // (separate columns), so they run together: one slow source costs its own
+  // timeout, not the sum of all three. They still run after the main phase,
+  // since each UPDATEs a row that phase must have created first.
+  // rate_expectations is cross-checked against the target rate we already
+  // have from FRED's own DFEDTARU series — see rateExpectations.js's
+  // file-header comment for why.
   const usRow = await getRateByCode("US");
-  await runEnrichment(
-    summary,
-    "rate_expectations",
-    () => fetchRateExpectations(usRow?.current_rate),
-    (row) => upsertRateExpectations(row.countryCode, row)
-  );
+  await Promise.all([
+    runEnrichment(summary, "inflation", fetchInflation, (row) => upsertInflation(row.countryCode, row)),
+    runEnrichment(summary, "fx", fetchFx, (row) => upsertFx(row.countryCode, row)),
+    runEnrichment(
+      summary,
+      "rate_expectations",
+      () => fetchRateExpectations(usRow?.current_rate),
+      (row) => upsertRateExpectations(row.countryCode, row)
+    ),
+  ]);
 
   // Keep sync_log from growing forever — see pruneSyncLog's comment.
   await pruneSyncLog();
@@ -140,7 +162,20 @@ async function runEnrichment(summary, name, fetchFn, upsertFn) {
   try {
     const rows = await fetchFn();
     for (const row of rows) await upsertFn(row);
-    await logSync(name, "ok", `${rows.length} countries updated`, rows.length);
+
+    // Some enrichments (inflation) fetch several independent sources and
+    // attach per-source `warnings` / a `skipped` count to the rows they
+    // return. A failed source must show up in sync_log as "partial" with its
+    // name, not hide behind a clean "ok" that only the server console
+    // contradicts.
+    const warnings = rows.warnings ?? [];
+    const skippedNote = rows.skipped ? `; ${rows.skipped} still fresh, not refetched` : "";
+    if (warnings.length) {
+      summary.errors.push(`${name}: ${warnings.join("; ")}`);
+      await logSync(name, "partial", `${rows.length} countries updated${skippedNote}; ${warnings.length} failed: ${warnings.join("; ")}`, rows.length);
+    } else {
+      await logSync(name, "ok", `${rows.length} countries updated${skippedNote}`, rows.length);
+    }
   } catch (err) {
     summary.errors.push(`${name}: ${err.message}`);
     await logSync(name, "error", err.message, 0);
