@@ -4,7 +4,22 @@ A free, self-hosted "what's the current policy rate, right now" dashboard for
 major central banks — plus a small API (protected by an API key) that other
 tools can query for the same cached data.
 
-Try The website https://world-interest-rates.onrender.com/
+**Live:** https://world-interest-rates.onrender.com/
+
+![Dashboard: US rate expectations and the rates table](docs/dashboard.jpg)
+
+## What it shows
+
+- **Policy rates for 27 economies**, with the last change in basis points,
+  the date it happened, and a trend sparkline built from stored history.
+- **Next meeting date** for the US, Euro Area, UK, Australia and Canada.
+  The US FOMC calendar refreshes itself from federalreserve.gov
+  (`src/sources/fedCalendar.js`).
+- **Headline inflation (CPI YoY) and real rate** for the US, Euro Area, UK,
+  Canada and Brazil (FRED, Eurostat, ONS, StatCan, BCB).
+- **FX rate vs USD** from frankfurter.dev (ECB reference rates).
+- **US rate expectations** for the next FOMC meeting, derived from EFFR and
+  CME 30-Day Fed Funds futures (`src/sources/rateExpectations.js`).
 
 ## How it's built
 
@@ -14,7 +29,7 @@ Free upstream sources (FRED, ECB, BoE, BoC, BCB, BIS)
         ▼
    Sync worker (src/sync)  →  SQLite / Turso cache
         │
-        ├── /public/rates        (no auth — the dashboard page calls this)
+        ├── /w/f                 (dashboard feed — same-origin browser + signed cookie)
         ├── /api/v1/rates[...]   (requires X-Api-Key — for external consumers)
         └── /internal/sync       (requires X-Sync-Secret — cron trigger)
 ```
@@ -27,9 +42,9 @@ Free upstream sources (FRED, ECB, BoE, BoC, BCB, BIS)
   value to what we last stored — never trusted from an upstream "change"
   field.
 - **"Fast lane" sources** (FRED, ECB, BoE, BoC, BCB) are dedicated,
-  near-real-time feeds for the six most-watched economies. **Everything
-  else** falls back to the BIS policy-rate database, which is free and
-  covers ~25 more countries, at the cost of a several-day lag versus the
+  near-real-time feeds for five economies (US, Euro Area, UK, Canada,
+  Brazil). **Everything else** falls back to the BIS policy-rate database,
+  which is free and covers the other 22 countries (27 in total), at the cost of a several-day lag versus the
   fast-lane sources (see `api/src/sources/bis.js`).
 
 ## Data sources (all free, verified live on 2026-09-12)
@@ -41,7 +56,13 @@ Free upstream sources (FRED, ECB, BoE, BoC, BCB, BIS)
 | Bank of England (IADB CSV) | UK | None | 1-2 days |
 | Bank of Canada (Valet API) | Canada | None | 3-4 days |
 | Central Bank of Brazil (SGS) | Brazil | None | 0 days |
-| BIS policy rate DB (SDMX) | ~25 more countries | None | ~1 week |
+| BIS policy rate DB (SDMX) | 22 more countries | None | ~1 week |
+| Yahoo Finance chart API (unofficial) | US rate expectations (ZQ futures) | None | intraday |
+| frankfurter.dev | FX vs USD | None | 1 day |
+
+The Yahoo endpoint is the one unofficial source: it has no published
+contract and could change or block requests without notice. Every sync
+validates the response before using it.
 
 Deliberately **not** used: Trading Economics (paid only) and Finnhub (no
 central-bank data on any tier, paid or free). API-Ninjas was evaluated as a
@@ -66,9 +87,13 @@ docker compose up --build
 
 Then:
 - Dashboard: http://localhost:3000
-- Public read API (dashboard's own feed): http://localhost:3000/public/rates
 - Keyed API: `curl -H "X-Api-Key: <your key>" http://localhost:3000/api/v1/rates`
 - Manual sync trigger: `curl -X POST -H "X-Sync-Secret: <your secret>" http://localhost:3000/internal/sync`
+- Recent sync runs: `curl -H "X-Sync-Secret: <your secret>" http://localhost:3000/internal/sync-log`
+
+Optional: set `DASHBOARD_TOKEN_SECRET` only if you run several instances
+that must accept each other's dashboard cookies. By default a random secret
+is generated on every boot.
 
 The first boot auto-runs a sync if the database is empty, so the dashboard
 is never blank on a fresh start.
@@ -127,16 +152,21 @@ Asia, Oceania, Africa, Middle East), `tag` (e.g. `G20`).
 ### `GET /api/v1/rates/:code`
 Requires `X-Api-Key`. `:code` is the country code (e.g. `US`, `EA`, `GB`).
 
-### `GET /public/rates`
-No auth, IP rate-limited. Same shape as above, unfiltered — this is what
-`public/app.js` calls.
+### `GET /w/f`
+The dashboard's own feed, called by `public/app.js`. Not a public API: it
+requires a same-origin browser request and a short-lived HMAC-signed cookie
+issued when the page loads, and is rate-limited to 30 requests a minute.
+Use `/api/v1/rates` with a key for programmatic access.
+
+### `POST /internal/sync` and `GET /internal/sync-log`
+Require `X-Sync-Secret`. Trigger a sync, or list recent sync runs.
 
 ## Known limitations / next steps
 
-- `next_meeting_date` is hand-maintained in `src/config/meetingCalendars.js`
-  for the five fast-lane banks (each publishes its annual schedule in
-  advance) — refresh it once a year when each bank posts next year's dates.
-  Other countries show no countdown.
+- `next_meeting_date` for the ECB, BoE, RBA and BoC is hand-maintained in
+  `src/config/meetingCalendars.js` — refresh it once a year. The US calendar
+  updates itself. Other countries show no countdown.
+- No automated tests yet.
 - API keys are a flat env-var list — fine for a handful of hand-issued
   keys; swap in a DB-backed table with hashed keys if you need self-serve
   issuance/revocation later.
